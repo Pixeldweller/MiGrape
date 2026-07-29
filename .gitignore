@@ -1,0 +1,7 @@
+target/
+*.class
+config.properties
+migration.log
+migration.state
+*.iml
+.idea/

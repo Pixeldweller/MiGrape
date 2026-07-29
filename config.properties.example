@@ -1,0 +1,17 @@
+# Kopieren nach config.properties und anpassen.
+
+h2.url=jdbc:h2:file:C:/pfad/zu/meiner-db
+h2.user=sa
+h2.password=
+
+maria.url=jdbc:mariadb://localhost:3306/zieldb
+maria.user=root
+maria.password=secret
+
+# Anzahl Zeilen pro Batch-Insert
+batch.size=2000
+# JDBC Fetch-Size beim Lesen aus H2 (haelt Speicherverbrauch niedrig)
+fetch.size=2000
+
+# Optional: nur bestimmte Tabellen migrieren (Komma-getrennt). Leer = alle Tabellen.
+tables=
