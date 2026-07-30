@@ -24,6 +24,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -190,7 +191,7 @@ class HibernateFixtureMigrationTest {
     void columnTypesAreMappedAsExpected() throws Exception {
         try (Connection maria = openMaria()) {
             assertEquals("char(36)", columnType(maria, "EMPLOYEE", "EXTERNAL_ID"),
-                    "UUID hat in MariaDB keine Entsprechung und wird als Text abgelegt");
+                    "feste Breite bleibt feste Breite, kein VARCHAR");
             assertEquals("longtext", columnType(maria, "EMPLOYEE", "NOTES"),
                     "CLOB darf nicht als TEXT landen (65535-Byte-Grenze)");
             assertEquals("longblob", columnType(maria, "EMPLOYEE", "PHOTO"));
@@ -231,6 +232,9 @@ class HibernateFixtureMigrationTest {
             assertEquals("varchar(80)", columnType(maria, "EMPLOYEE", "FIRST_NAME"));
             assertEquals("varchar(12)", columnType(maria, "PROJECT", "CODE"),
                     "natuerlicher Primaerschluessel als Text");
+            // Von Hibernate erzeugte Zeitstempel: LocalDateTime und Instant landen beide hier.
+            assertEquals("datetime(6)", columnType(maria, "ANNOUNCEMENT", "CREATED_AT"));
+            assertEquals("datetime(6)", columnType(maria, "ANNOUNCEMENT", "UPDATED_AT"));
         }
     }
 
@@ -354,6 +358,53 @@ class HibernateFixtureMigrationTest {
                 assertNull(rs.getString("CITY"));
                 rs.getLong("MANAGER_ID");
                 assertFalse(rs.wasNull(), "MANAGER_ID zeigt auf die Selbstreferenz und ist gesetzt");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Die von Hibernate erzeugten Zeitstempel kommen als Werte mit, nicht als Defaults")
+    void generatedTimestampsArriveAsData() throws Exception {
+        try (Connection maria = openMaria()) {
+            // Verglichen wird jeweils Zeile gegen Zeile innerhalb <em>einer</em> Spalte.
+            // CREATED_AT und CREATED_AT/UPDATED_AT gegeneinander zu halten waere falsch: die
+            // Fixture legt die beiden Spalten aus unterschiedlichen Java-Typen an, die in
+            // verschiedenen Bezugssystemen in der Datenbank landen (lokale Zeit vs. UTC).
+            LocalDateTime createdChanged = timestamp(maria, HibernateFixtureContract.ANNOUNCEMENT1_TITLE,
+                    "CREATED_AT");
+            LocalDateTime createdUntouched = timestamp(maria, HibernateFixtureContract.ANNOUNCEMENT2_TITLE,
+                    "CREATED_AT");
+            LocalDateTime updatedChanged = timestamp(maria, HibernateFixtureContract.ANNOUNCEMENT1_TITLE,
+                    "UPDATED_AT");
+            LocalDateTime updatedUntouched = timestamp(maria, HibernateFixtureContract.ANNOUNCEMENT2_TITLE,
+                    "UPDATED_AT");
+
+            // Beide Zeilen wurden zusammen eingefuegt, danach wurde nur die erste geaendert.
+            assertTrue(updatedChanged.isAfter(updatedUntouched),
+                    "UPDATED_AT der geaenderten Zeile (" + updatedChanged + ") muss nach dem der "
+                            + "unveraenderten (" + updatedUntouched + ") liegen");
+            assertTrue(Duration.between(createdUntouched, createdChanged).abs()
+                            .compareTo(Duration.ofSeconds(1)) < 0,
+                    "CREATED_AT stammt bei beiden Zeilen aus demselben INSERT, war aber "
+                            + createdChanged + " vs. " + createdUntouched);
+
+            // Die Spalten duerfen keinen automatischen Zeitstempel bekommen haben: MariaDB
+            // wuerde die Werte sonst beim naechsten UPDATE ueberschreiben.
+            assertEquals("", extra(maria, "ANNOUNCEMENT", "UPDATED_AT"),
+                    "UPDATED_AT darf kein ON UPDATE CURRENT_TIMESTAMP tragen");
+            assertNull(columnDefault(maria, "ANNOUNCEMENT", "CREATED_AT"),
+                    "CREATED_AT darf keinen Standardwert bekommen haben");
+        }
+    }
+
+    private static LocalDateTime timestamp(Connection maria, String title, String column)
+            throws SQLException {
+        try (PreparedStatement ps = maria.prepareStatement(
+                "SELECT " + column + " FROM ANNOUNCEMENT WHERE TITLE = ?")) {
+            ps.setString(1, title);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next(), "Ankuendigung '" + title + "' nicht gefunden");
+                return rs.getTimestamp(1).toLocalDateTime();
             }
         }
     }

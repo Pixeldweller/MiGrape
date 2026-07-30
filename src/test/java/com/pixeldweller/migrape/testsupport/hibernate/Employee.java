@@ -72,7 +72,20 @@ public class Employee {
     @Column(name = "`RANK`", length = 20)
     public String rank;
 
-    @Column(name = "EXTERNAL_ID")
+    /**
+     * Ausdruecklich als CHAR(36) gemappt, nicht als H2-UUID-Typ.
+     *
+     * Grund ist Testreihe 3: der Migrator bildet H2-UUID auf CHAR(36) ab, Hibernate erwartet
+     * fuer ein UUID-Feld auf MariaDB aber einen Binaertyp. Mit dem H2-eigenen UUID-Typ liesse
+     * sich die migrierte Tabelle also nicht mehr mit demselben Mapping lesen -- die Anwendung
+     * muesste nach der Migration genau diese Annotation nachziehen. Hier steht sie von
+     * vornherein, damit alle drei Testreihen dasselbe Mapping benutzen koennen.
+     *
+     * Der H2-UUID-Typ selbst bleibt abgedeckt: durch RichSchemaFixture (AUTHOR.EXTERNAL_ID)
+     * und H2MetadataTypeMappingTest (C_UUID).
+     */
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "EXTERNAL_ID", length = 36)
     public UUID externalId;
 
     @Column(name = "HIRE_DATE")

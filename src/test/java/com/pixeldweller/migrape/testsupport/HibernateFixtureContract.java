@@ -33,7 +33,7 @@ public final class HibernateFixtureContract {
 
     /** Alle Tabellen, die Hibernate aus dem Entity-Modell anlegt (H2 meldet Namen in Grossschrift). */
     public static final List<String> TABLES = List.of(
-            "CAR", "DEPARTMENT", "EMPLOYEE", "EMPLOYEE_SKILL", "GROUP",
+            "ANNOUNCEMENT", "CAR", "DEPARTMENT", "EMPLOYEE", "EMPLOYEE_SKILL", "GROUP",
             "PROJECT", "PROJECT_MEMBER", "TIME_ENTRY", "TRUCK", "VEHICLE");
 
     public static final Map<String, Long> ROW_COUNTS = rowCounts();
@@ -95,6 +95,14 @@ public final class HibernateFixtureContract {
     public static final String GROUP1_VALUE = "de-DE";
     public static final String GROUP2_KEY = "feature.flag";
 
+    // ---- ANNOUNCEMENT (von Hibernate erzeugte Zeitstempel) ----
+    /** Titel beim Einfuegen -- diese Zeile wird anschliessend geaendert, damit UPDATED_AT
+     *  nachweislich spaeter liegt als CREATED_AT. */
+    public static final String ANNOUNCEMENT1_TITLE_ON_INSERT = "Wartungsfenster (Entwurf)";
+    public static final String ANNOUNCEMENT1_TITLE = "Wartungsfenster am Wochenende";
+    /** Diese Zeile wird nach dem Einfuegen nicht mehr angefasst. */
+    public static final String ANNOUNCEMENT2_TITLE = "Neue Kaffeemaschine im 2. Stock";
+
     // ---- VEHICLE/CAR/TRUCK (JOINED-Vererbung: Kind-PK ist gleichzeitig Fremdschluessel) ----
     public static final String CAR_PLATE = "M-AB 123";
     public static final int CAR_SEATS = 5;
@@ -116,6 +124,7 @@ public final class HibernateFixtureContract {
         counts.put("VEHICLE", 2L);
         counts.put("CAR", 1L);
         counts.put("TRUCK", 1L);
+        counts.put("ANNOUNCEMENT", 2L);
         return Map.copyOf(counts);
     }
 

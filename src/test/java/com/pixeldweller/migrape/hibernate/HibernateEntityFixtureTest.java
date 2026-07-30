@@ -2,6 +2,7 @@ package com.pixeldweller.migrape.hibernate;
 
 import com.pixeldweller.migrape.testsupport.HibernateFixtureContract;
 import com.pixeldweller.migrape.testsupport.TempFiles;
+import com.pixeldweller.migrape.testsupport.hibernate.Announcement;
 import com.pixeldweller.migrape.testsupport.hibernate.Department;
 import com.pixeldweller.migrape.testsupport.hibernate.Employee;
 import com.pixeldweller.migrape.testsupport.hibernate.Enums;
@@ -9,6 +10,7 @@ import com.pixeldweller.migrape.testsupport.hibernate.HibernateFixture;
 import com.pixeldweller.migrape.testsupport.hibernate.Project;
 import com.pixeldweller.migrape.testsupport.hibernate.TimeEntry;
 import org.hibernate.PropertyValueException;
+import org.hibernate.Session;
 import org.hibernate.SessionFactory;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.AfterAll;
@@ -28,7 +30,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -101,9 +107,10 @@ class HibernateEntityFixtureTest {
     @DisplayName("Die Java-Typen der Entities landen als die erwarteten H2-Spaltentypen")
     void mapsJavaTypesToExpectedH2Types() throws Exception {
         try (Connection h2 = openH2()) {
-            // UUID meldet H2 als BINARY mit TYPE_NAME "UUID" -- genau der Fall, den der
-            // TypeMapper vor dem jdbcType-Switch abfangen muss.
-            assertColumn(h2, "EMPLOYEE", "EXTERNAL_ID", Types.BINARY, "UUID");
+            // Bewusst CHAR(36) statt H2-UUID, siehe Employee.externalId: nur so laesst sich die
+            // migrierte MariaDB-Tabelle in Testreihe 3 mit demselben Mapping wieder lesen.
+            assertColumnType(h2, "EMPLOYEE", "EXTERNAL_ID", Types.CHAR);
+            assertEquals(36, columnSize(h2, "EMPLOYEE", "EXTERNAL_ID"));
             assertColumnType(h2, "EMPLOYEE", "NOTES", Types.CLOB);
             assertColumnType(h2, "EMPLOYEE", "PHOTO", Types.BLOB);
             assertColumnType(h2, "EMPLOYEE", "FINGERPRINT", Types.VARBINARY);
@@ -193,6 +200,7 @@ class HibernateEntityFixtureTest {
                             + primaryKeyColumns(h2, "EMPLOYEE_SKILL"));
 
             assertEquals(new TreeSet<>(List.of(
+                            "FK_ANNOUNCEMENT_DEPARTMENT",
                             "FK_CAR_VEHICLE", "FK_DEPARTMENT_PARENT", "FK_EMPLOYEE_DEPARTMENT",
                             "FK_EMPLOYEE_MANAGER", "FK_GROUP_DEPARTMENT", "FK_MEMBER_EMPLOYEE",
                             "FK_MEMBER_PROJECT", "FK_PROJECT_DEPARTMENT", "FK_SKILL_EMPLOYEE",
@@ -262,6 +270,32 @@ class HibernateEntityFixtureTest {
                 assertFalse(emp2.active);
                 assertNotNull(emp2.manager, "MANAGER_ID zeigt auf Mitarbeiter 1 (Selbstreferenz)");
                 assertTrue(emp2.skills.isEmpty());
+            });
+        }
+    }
+
+    @Test
+    @DisplayName("@CreationTimestamp und @UpdateTimestamp sind beim Schreiben gefuellt worden")
+    void generatedTimestampsAreWritten() {
+        try (SessionFactory sessionFactory = HibernateFixture.openSessionFactory(h2Url, false)) {
+            sessionFactory.inTransaction(session -> {
+                // Diese Zeile wurde nach dem Einfuegen einmal geaendert.
+                Announcement geaendert = announcementByTitle(session,
+                        HibernateFixtureContract.ANNOUNCEMENT1_TITLE);
+                assertNotNull(geaendert.createdAt, "CREATED_AT wurde nicht gesetzt");
+                assertNotNull(geaendert.updatedAt, "UPDATED_AT wurde nicht gesetzt");
+                assertTrue(localTimeOf(geaendert.updatedAt).isAfter(geaendert.createdAt),
+                        "UPDATED_AT (" + localTimeOf(geaendert.updatedAt) + ") muss nach CREATED_AT ("
+                                + geaendert.createdAt + ") liegen");
+
+                // Diese hier nicht -- ihre beiden Zeitstempel stammen aus demselben INSERT.
+                Announcement unveraendert = announcementByTitle(session,
+                        HibernateFixtureContract.ANNOUNCEMENT2_TITLE);
+                Duration abstand = Duration.between(unveraendert.createdAt,
+                        localTimeOf(unveraendert.updatedAt)).abs();
+                assertTrue(abstand.compareTo(Duration.ofSeconds(1)) < 0,
+                        "Ohne Aenderung sollten beide Zeitstempel praktisch gleich sein, waren "
+                                + abstand + " auseinander");
             });
         }
     }
@@ -361,6 +395,18 @@ class HibernateEntityFixtureTest {
 
     private Connection openH2() throws SQLException {
         return DriverManager.getConnection(h2Url, "sa", "");
+    }
+
+    private static Announcement announcementByTitle(Session session, String title) {
+        return session.createQuery("from Announcement where title = :title", Announcement.class)
+                .setParameter("title", title)
+                .getSingleResult();
+    }
+
+    /** UPDATED_AT ist ein Instant, CREATED_AT eine zonenlose Zeit -- fuer den Vergleich wird der
+     *  Zeitpunkt in dieselbe Darstellung gebracht. */
+    private static LocalDateTime localTimeOf(Instant instant) {
+        return LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
     }
 
     private SessionFactory freshInMemoryFactory() {

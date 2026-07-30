@@ -28,19 +28,36 @@ public final class HibernateFixture {
     /** Alle Entities des Modells -- ohne Klassenpfad-Scan, damit nichts unbemerkt dazukommt. */
     public static final List<Class<?>> ENTITIES = List.of(
             Department.class, Employee.class, Project.class, TimeEntry.class,
-            WorkGroup.class, Vehicle.class, Car.class, Truck.class);
+            WorkGroup.class, Vehicle.class, Car.class, Truck.class, Announcement.class);
 
     private HibernateFixture() {
     }
 
+    /** Hibernate auf der H2-Fixture. */
     public static SessionFactory openSessionFactory(String jdbcUrl, boolean createSchema) {
+        return open("org.h2.Driver", jdbcUrl, "sa", "", "org.hibernate.dialect.H2Dialect",
+                createSchema);
+    }
+
+    /** Hibernate auf der bereits migrierten MariaDB -- dieselben Entities, anderes DBMS.
+     *  Das Schema kommt hier ausschliesslich vom Migrator, Hibernate darf nichts anlegen.
+     *  Der Dialekt wird bewusst nicht gesetzt: Hibernate soll ihn samt Serverversion aus den
+     *  JDBC-Metadaten ermitteln, so wie in einer echten Anwendung. */
+    public static SessionFactory openMariaDbSessionFactory(String jdbcUrl, String user, String password) {
+        return open("org.mariadb.jdbc.Driver", jdbcUrl, user, password, null, false);
+    }
+
+    private static SessionFactory open(String driver, String jdbcUrl, String user, String password,
+                                       String dialect, boolean createSchema) {
         Configuration cfg = new Configuration();
-        cfg.setProperty("hibernate.connection.driver_class", "org.h2.Driver");
+        cfg.setProperty("hibernate.connection.driver_class", driver);
         cfg.setProperty("hibernate.connection.url", jdbcUrl);
-        cfg.setProperty("hibernate.connection.username", "sa");
-        cfg.setProperty("hibernate.connection.password", "");
+        cfg.setProperty("hibernate.connection.username", user);
+        cfg.setProperty("hibernate.connection.password", password);
         cfg.setProperty("hibernate.connection.pool_size", "1");
-        cfg.setProperty("hibernate.dialect", "org.hibernate.dialect.H2Dialect");
+        if (dialect != null) {
+            cfg.setProperty("hibernate.dialect", dialect);
+        }
         cfg.setProperty("hibernate.hbm2ddl.auto", createSchema ? "create" : "none");
         cfg.setProperty("hibernate.show_sql", "false");
         // Bewusst KEIN hibernate.jdbc.time_zone: die Einstellung schaltet die Bindung der
@@ -125,7 +142,37 @@ public final class HibernateFixture {
                     HibernateFixtureContract.CAR_SEATS));
             session.persist(new Truck(HibernateFixtureContract.TRUCK_PLATE, child,
                     HibernateFixtureContract.TRUCK_PAYLOAD_KG));
+
+            // CREATED_AT und UPDATED_AT setzt Hibernate selbst.
+            session.persist(new Announcement(
+                    HibernateFixtureContract.ANNOUNCEMENT1_TITLE_ON_INSERT, root));
+            session.persist(new Announcement(HibernateFixtureContract.ANNOUNCEMENT2_TITLE, null));
         });
+
+        touchFirstAnnouncement(sessionFactory);
+    }
+
+    /** Aendert die erste Ankuendigung in einer zweiten Transaktion. Erst dadurch enthaelt die
+     *  Fixture eine Zeile, deren UPDATED_AT spaeter liegt als ihr CREATED_AT -- ohne diesen
+     *  Schritt waeren beide Spalten praktisch gleich und der Unterschied nicht pruefbar. */
+    private static void touchFirstAnnouncement(SessionFactory sessionFactory) {
+        pauseBriefly();
+        sessionFactory.inTransaction(session -> {
+            Announcement announcement = session
+                    .createQuery("from Announcement where title = :title", Announcement.class)
+                    .setParameter("title", HibernateFixtureContract.ANNOUNCEMENT1_TITLE_ON_INSERT)
+                    .getSingleResult();
+            announcement.title = HibernateFixtureContract.ANNOUNCEMENT1_TITLE;
+        });
+    }
+
+    /** Kurz warten, damit der neue Zeitstempel auch bei grober Uhrauflösung messbar spaeter liegt. */
+    private static void pauseBriefly() {
+        try {
+            Thread.sleep(20);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static Employee fullyPopulatedEmployee(Department department) {
