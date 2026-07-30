@@ -28,22 +28,27 @@ public final class MigrationService {
         this.connectionFactory = new ConnectionFactory(config);
     }
 
-    /** Legt nur das Schema (Tabellen + Foreign Keys) auf MariaDB an, ohne Daten zu kopieren. */
+    /** Legt nur das Schema (Tabellen, Schluessel, Indizes) auf MariaDB an, ohne Daten zu kopieren. */
     public void migrateSchema(boolean dropExisting) throws SQLException {
         try (Connection h2 = connectionFactory.openH2();
              Connection maria = connectionFactory.openMaria()) {
 
-            Map<String, TableDefinition> tables = new SchemaReader(h2, config).readSchema();
+            SchemaReader reader = new SchemaReader(h2, config);
+            Map<String, TableDefinition> tables = reader.readSchema();
             List<String> order = TableOrderResolver.resolve(tables);
 
-            Log.info("Erstelle Schema fuer " + tables.size() + " Tabelle(n) in Reihenfolge: " + order);
+            Log.info("Erstelle Schema fuer " + tables.size() + " Tabelle(n) aus Schema "
+                    + reader.schema() + " in Reihenfolge: " + order);
             new SchemaWriter(maria, dropExisting).createTables(order, tables);
             Log.info("Schema-Migration abgeschlossen.");
         }
     }
 
-    /** Kopiert die Daten aller (nicht bereits als DONE markierten) Tabellen. Schema muss bereits existieren. */
-    public void migrateData(MigrationState state) throws SQLException {
+    /** Kopiert die Daten aller Tabellen. Das Schema muss bereits existieren.
+     *
+     *  @param resume wenn true, werden in der Status-Datei als DONE markierte Tabellen
+     *                uebersprungen; wenn false, werden alle Tabellen neu kopiert. */
+    public void migrateData(MigrationState state, boolean resume) throws SQLException {
         try (Connection h2 = connectionFactory.openH2();
              Connection maria = connectionFactory.openMaria()) {
 
@@ -53,30 +58,45 @@ public final class MigrationService {
             BatchInserter inserter = new BatchInserter(h2, maria, config.fetchSize, config.batchSize);
             ProgressPrinter progress = new ProgressPrinter();
 
-            for (String tableName : order) {
-                if (state.isDone(tableName)) {
-                    Log.info("Ueberspringe " + tableName + " (bereits migriert laut Status-Datei)");
-                    continue;
+            // Fuer den gesamten Datenlauf abschalten: selbstreferenzierende und zyklische
+            // Fremdschluessel lassen sich sonst nicht befuellen, weil H2 keine Zeilenreihenfolge
+            // garantiert, in der Elternzeilen vor Kindzeilen kommen.
+            setForeignKeyChecks(maria, false);
+            try {
+                for (String tableName : order) {
+                    if (resume && state.isDone(tableName)) {
+                        Log.info("Ueberspringe " + tableName + " (bereits migriert laut Status-Datei)");
+                        continue;
+                    }
+                    Log.info("Kopiere Tabelle " + tableName);
+                    truncateTarget(maria, tableName);
+                    long copied = inserter.copy(tables.get(tableName), progress);
+                    Log.info(tableName + ": " + copied + " Zeilen kopiert");
+                    state.markDone(tableName);
                 }
-                Log.info("Kopiere Tabelle " + tableName);
-                truncateTarget(maria, tableName);
-                long copied = inserter.copy(tables.get(tableName), progress);
-                Log.info(tableName + ": " + copied + " Zeilen kopiert");
-                state.markDone(tableName);
+            } finally {
+                setForeignKeyChecks(maria, true);
+                maria.commit();
             }
         }
     }
 
     private void truncateTarget(Connection maria, String tableName) throws SQLException {
         try (Statement stmt = maria.createStatement()) {
-            stmt.execute("SET FOREIGN_KEY_CHECKS=0");
             stmt.execute("TRUNCATE TABLE " + DbDialect.MARIADB.quote(tableName));
-            stmt.execute("SET FOREIGN_KEY_CHECKS=1");
         }
         maria.commit();
     }
 
-    /** Vergleicht Zeilenzahlen je Tabelle zwischen H2 und MariaDB. */
+    private void setForeignKeyChecks(Connection maria, boolean enabled) throws SQLException {
+        try (Statement stmt = maria.createStatement()) {
+            stmt.execute("SET FOREIGN_KEY_CHECKS=" + (enabled ? "1" : "0"));
+        }
+    }
+
+    /** Vergleicht Zeilenzahlen je Tabelle zwischen H2 und MariaDB. Ist eine Tabelle auf der
+     *  Zielseite nicht lesbar, wird das als Abweichung gemeldet statt die ganze Pruefung
+     *  abzubrechen. */
     public List<VerificationResult> verify() throws SQLException {
         List<VerificationResult> results = new ArrayList<>();
         try (Connection h2 = connectionFactory.openH2();
@@ -84,9 +104,15 @@ public final class MigrationService {
 
             Map<String, TableDefinition> tables = new SchemaReader(h2, config).readSchema();
             for (String tableName : tables.keySet()) {
-                long sourceCount = count(h2, DbDialect.H2, tableName);
-                long targetCount = count(maria, DbDialect.MARIADB, tableName);
-                results.add(new VerificationResult(tableName, sourceCount, targetCount));
+                try {
+                    long sourceCount = count(h2, DbDialect.H2, tableName);
+                    long targetCount = count(maria, DbDialect.MARIADB, tableName);
+                    results.add(new VerificationResult(tableName, sourceCount, targetCount));
+                } catch (SQLException e) {
+                    results.add(VerificationResult.failed(tableName, e.getMessage()));
+                    // Nach einem Fehler kann die MariaDB-Transaktion als abgebrochen gelten.
+                    maria.rollback();
+                }
             }
         }
         return results;

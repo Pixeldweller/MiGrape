@@ -1,5 +1,7 @@
 package com.pixeldweller.migrape;
 
+import com.pixeldweller.migrape.db.MariaDbSslConfig;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -11,10 +13,14 @@ public final class MigrationConfig {
     public final String h2Url;
     public final String h2User;
     public final String h2Password;
+    /** Zu migrierendes H2-Schema. null = Schema der Verbindung (bei H2 ueblicherweise PUBLIC). */
+    public final String h2Schema;
 
     public final String mariaUrl;
     public final String mariaUser;
     public final String mariaPassword;
+    /** SSL/TLS- und weitere Treiber-Optionen fuer die MariaDB-Verbindung. */
+    public final MariaDbSslConfig mariaSsl;
 
     public final int batchSize;
     public final int fetchSize;
@@ -26,13 +32,15 @@ public final class MigrationConfig {
         this.h2Url = require(p, "h2.url");
         this.h2User = p.getProperty("h2.user", "sa");
         this.h2Password = p.getProperty("h2.password", "");
+        this.h2Schema = optional(p, "h2.schema");
 
         this.mariaUrl = require(p, "maria.url");
         this.mariaUser = require(p, "maria.user");
         this.mariaPassword = p.getProperty("maria.password", "");
+        this.mariaSsl = MariaDbSslConfig.from(p);
 
-        this.batchSize = Integer.parseInt(p.getProperty("batch.size", "2000"));
-        this.fetchSize = Integer.parseInt(p.getProperty("fetch.size", "2000"));
+        this.batchSize = positiveInt(p, "batch.size", 2000);
+        this.fetchSize = positiveInt(p, "fetch.size", 2000);
 
         String filter = p.getProperty("tables", "").trim();
         this.tableFilter = filter.isEmpty() ? null : filter.split("\\s*,\\s*");
@@ -44,6 +52,29 @@ public final class MigrationConfig {
             throw new IllegalArgumentException("Fehlender Pflichtwert in config.properties: " + key);
         }
         return v.trim();
+    }
+
+    private static String optional(Properties p, String key) {
+        String v = p.getProperty(key);
+        return v == null || v.isBlank() ? null : v.trim();
+    }
+
+    private static int positiveInt(Properties p, String key, int defaultValue) {
+        String raw = p.getProperty(key);
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        int value;
+        try {
+            value = Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(
+                    "Ungueltiger Zahlenwert fuer " + key + " in config.properties: '" + raw.trim() + "'");
+        }
+        if (value <= 0) {
+            throw new IllegalArgumentException(key + " muss groesser als 0 sein (war: " + value + ")");
+        }
+        return value;
     }
 
     public static MigrationConfig load(Path path) throws IOException {

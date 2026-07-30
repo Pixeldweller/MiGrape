@@ -1,5 +1,9 @@
 package com.pixeldweller.migrape.migration;
 
+import com.pixeldweller.migrape.util.Log;
+
+/** Schreibt den Kopierfortschritt als sich selbst ueberschreibende Konsolenzeile.
+ *  Laeuft ueber {@link Log}, damit Fortschritt und normale Log-Ausgaben sich nicht vermischen. */
 public final class ProgressPrinter {
 
     private long lastPrintedPercent = -1;
@@ -9,17 +13,17 @@ public final class ProgressPrinter {
             return;
         }
         long percent = (copied * 100) / total;
-        if (percent != lastPrintedPercent) {
-            lastPrintedPercent = percent;
-            System.out.printf("\r%-30s %,10d / %,10d (%3d%%)", table, copied, total, percent);
-            if (percent == 100) {
-                System.out.println();
-            }
+        if (percent == lastPrintedPercent) {
+            return;
         }
+        lastPrintedPercent = percent;
+        Log.progress(String.format("%-30s %,10d / %,10d (%3d%%)", table, copied, total, percent));
     }
 
-    public void finish(String table, long copied) {
+    /** Beendet die Fortschrittszeile. Die Erfolgsmeldung selbst schreibt der Aufrufer,
+     *  damit sie auch in der Log-Datei landet. */
+    public void finish() {
         lastPrintedPercent = -1;
-        System.out.printf("%-30s %,10d Zeilen kopiert%n", table, copied);
+        Log.endProgress();
     }
 }

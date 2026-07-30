@@ -1,12 +1,63 @@
 # Kopieren nach config.properties und anpassen.
+# Hinweis: In .properties-Dateien ist "\" ein Escape-Zeichen. Windows-Pfade daher mit
+# Schraegstrichen (C:/certs/ca.pem) oder doppeltem Backslash (C:\\certs\\ca.pem) angeben.
 
 h2.url=jdbc:h2:file:C:/pfad/zu/meiner-db
 h2.user=sa
 h2.password=
+# Optional: zu migrierendes H2-Schema. Leer/weggelassen = Schema der Verbindung (meist PUBLIC).
+# Es wird immer genau ein Schema migriert.
+h2.schema=
 
 maria.url=jdbc:mariadb://localhost:3306/zieldb
 maria.user=root
 maria.password=secret
+
+# ---- MariaDB ueber SSL/TLS (optional) ----------------------------------------
+# Ohne diese Schluessel verbindet sich MiGrape unverschluesselt wie bisher.
+#
+# Modus: disable | trust | verify-ca | verify-full
+#   disable      keine Verschluesselung
+#   trust        verschluesselt, Server-Zertifikat wird NICHT geprueft
+#   verify-ca    Zertifikatskette wird gegen maria.ssl.ca geprueft
+#   verify-full  wie verify-ca, zusaetzlich Pruefung des Hostnamens (empfohlen)
+# Kurzform: maria.ssl.enabled=true entspricht maria.ssl.mode=verify-full.
+maria.ssl.mode=
+
+# CA-Zertifikat des Servers als PEM-Datei (fuer verify-ca / verify-full).
+# Leer = CA muss im Standard-Truststore der JVM liegen.
+# Erlaubt sind auch classpath:mein-ca.pem oder der PEM-Inhalt direkt.
+maria.ssl.ca=
+
+# ---- Client-Zertifikat (mutual TLS), falls der Server es verlangt ----
+# Variante A: PEM-Dateien, so wie MariaDB sie ausliefert.
+# Der private Schluessel muss im PKCS#8-Format vorliegen ("BEGIN PRIVATE KEY").
+# PKCS#1-Schluessel ("BEGIN RSA PRIVATE KEY") einmalig konvertieren:
+#   openssl pkcs8 -topk8 -nocrypt -in client-key.pem -out client-key-pkcs8.pem
+maria.ssl.client.cert=
+maria.ssl.client.key=
+# Nur bei verschluesseltem Schluessel ("BEGIN ENCRYPTED PRIVATE KEY"):
+maria.ssl.client.key.password=
+
+# Variante B: fertiger Keystore mit Zertifikat + Schluessel (PKCS12 oder JKS).
+#   openssl pkcs12 -export -in client-cert.pem -inkey client-key.pem -out client.p12
+# Variante A und B schliessen sich aus.
+maria.ssl.keystore=
+maria.ssl.keystore.password=
+# Leer = PKCS12
+maria.ssl.keystore.type=
+# Passwort des privaten Schluessels im Keystore, falls es vom Keystore-Passwort abweicht
+maria.ssl.key.password=
+
+# Optionale Einschraenkung von TLS-Versionen bzw. Cipher Suites (Komma-getrennt)
+maria.ssl.protocols=
+maria.ssl.ciphers=
+
+# Beliebige weitere Optionen des MariaDB-JDBC-Treibers, z.B.
+#   maria.option.connectTimeout=10000
+#   maria.option.trustStoreType=JKS
+# Hinweis: Optionen, die direkt in maria.url stehen (?sslMode=...), haben Vorrang
+# vor den Werten aus dieser Datei.
 
 # Anzahl Zeilen pro Batch-Insert
 batch.size=2000

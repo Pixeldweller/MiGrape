@@ -5,6 +5,7 @@ import com.pixeldweller.migrape.MigrationConfig;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.Properties;
 
 /** Erzeugt einfache JDBC-Connections. Bewusst ohne Connection-Pool (HikariCP etc.),
  *  da nur ein sequenzieller Migrationslauf pro Tabelle noetig ist. */
@@ -21,8 +22,18 @@ public final class ConnectionFactory {
     }
 
     public Connection openMaria() throws SQLException {
-        Connection conn = DriverManager.getConnection(config.mariaUrl, config.mariaUser, config.mariaPassword);
+        Connection conn = DriverManager.getConnection(config.mariaUrl, mariaProperties());
         conn.setAutoCommit(false);
         return conn;
+    }
+
+    /** Zugangsdaten plus die konfigurierten SSL-/Treiber-Optionen. Optionen, die zusaetzlich in
+     *  maria.url stehen, haben beim Treiber Vorrang. */
+    private Properties mariaProperties() {
+        Properties props = new Properties();
+        props.setProperty("user", config.mariaUser);
+        props.setProperty("password", config.mariaPassword);
+        config.mariaSsl.applyTo(props);
+        return props;
     }
 }

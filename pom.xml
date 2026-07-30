@@ -16,6 +16,10 @@
         <h2.version>2.2.224</h2.version>
         <mariadb.version>3.3.3</mariadb.version>
         <main.class>com.pixeldweller.migrape.Main</main.class>
+
+        <junit.version>5.10.2</junit.version>
+        <mariadb4j.version>3.2.0</mariadb4j.version>
+        <hibernate.version>6.6.18.Final</hibernate.version>
     </properties>
 
     <dependencies>
@@ -32,11 +36,43 @@
         </dependency>
 
         <!--
-            Hibernate ist bewusst (noch) nicht eingebunden: der Migrator arbeitet
-            rein über JDBC-Metadaten (DatabaseMetaData) und braucht keine Entity-Klassen.
-            Falls spaeter z.B. JPA-basierte Schema-Validierung gewuenscht ist, kann
-            hibernate-core hier ergaenzt werden.
+            Hibernate ist bewusst NUR test-scope: der Migrator selbst arbeitet rein ueber
+            JDBC-Metadaten (DatabaseMetaData) und kennt keine Entity-Klassen. In den Tests
+            erzeugt Hibernate die H2-Fixture-Datenbank aus Entities, damit das Quellschema
+            so aussieht wie in einer echten JPA-Anwendung (siehe testsupport/hibernate).
         -->
+        <dependency>
+            <groupId>org.hibernate.orm</groupId>
+            <artifactId>hibernate-core</artifactId>
+            <version>${hibernate.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Nur fuer Tests: startet eine lokale, embedded MariaDB-Instanz -->
+        <dependency>
+            <groupId>ch.vorburger.mariaDB4j</groupId>
+            <artifactId>mariaDB4j</artifactId>
+            <version>${mariadb4j.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            Windows-x64 Binaries fuer MariaDB4j. Falls auf einem anderen OS/CPU gebaut wird,
+            muss stattdessen das passende ch.vorburger.mariaDB4j:mariaDB4j-db-* Artefakt
+            (z.B. mariaDB4j-db-linux64, mariaDB4j-db-macos-arm64) ergaenzt werden.
+        -->
+        <dependency>
+            <groupId>ch.vorburger.mariaDB4j</groupId>
+            <artifactId>mariaDB4j-db-winx64</artifactId>
+            <version>11.4.5</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -49,6 +85,12 @@
                 <configuration>
                     <release>17</release>
                 </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
             </plugin>
 
             <!-- Baut eine einzelne, sofort startbare JAR inkl. aller Treiber -->
