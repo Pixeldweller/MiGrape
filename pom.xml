@@ -117,7 +117,25 @@
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>${main.class}</mainClass>
                                 </transformer>
+                                <!--
+                                    Pflicht: H2 und mariadb-java-client bringen beide ein
+                                    META-INF/services/java.sql.Driver mit. Ohne diesen Transformer
+                                    ueberschreibt eine Datei die andere und DriverManager meldet
+                                    zur Laufzeit "No suitable driver found for jdbc:mariadb://...".
+                                -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
+                            <!-- Signatur-Dateien der Original-JARs wuerden die Shade-JAR ungueltig machen -->
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                         </configuration>
                     </execution>
                 </executions>
