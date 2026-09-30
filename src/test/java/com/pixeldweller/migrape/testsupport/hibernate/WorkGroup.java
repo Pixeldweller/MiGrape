@@ -17,8 +17,8 @@ import jakarta.persistence.Table;
  * beim Kopieren.
  *
  * Zusaetzlich wird der Schluessel hier aus einer H2-SEQUENCE gezogen statt per IDENTITY:
- * Sequenzen sind keine Tabellen und werden vom Migrator nicht mitgenommen, die Spalte darf
- * auf der Zielseite also kein AUTO_INCREMENT haben.
+ * die Spalte darf auf der Zielseite kein AUTO_INCREMENT haben, und die Sequenz muss mit ihrem
+ * aktuellen Stand nach MariaDB mitkommen.
  */
 @Entity
 @Table(name = "`GROUP`")

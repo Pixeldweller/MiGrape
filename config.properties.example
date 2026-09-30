@@ -2,6 +2,8 @@
 # Hinweis: In .properties-Dateien ist "\" ein Escape-Zeichen. Windows-Pfade daher mit
 # Schraegstrichen (C:/certs/ca.pem) oder doppeltem Backslash (C:\\certs\\ca.pem) angeben.
 
+# Beim Kommando 'reverse' (MariaDB -> H2) ist H2 das Ziel: die Datei muss dann schon existieren
+# und das Schema enthalten (z.B. Anwendung einmal mit ddl-auto=create dagegen starten).
 h2.url=jdbc:h2:file:C:/pfad/zu/meiner-db
 h2.user=sa
 h2.password=
@@ -12,6 +14,15 @@ h2.schema=
 maria.url=jdbc:mariadb://localhost:3306/zieldb
 maria.user=root
 maria.password=secret
+
+# Schreibweise der Bezeichner (Tabellen, Spalten, Constraints, Indizes, Sequenzen) in MariaDB:
+#   lower     alles kleinschreiben (Standard)
+#   upper     alles grossschreiben
+#   preserve  genau so uebernehmen, wie H2 sie fuehrt (bei Hibernate-Anwendungen meist GROSS)
+# H2 schreibt nicht gequotete Namen gross, auch bei @Table(name = "kunde"). MariaDB unter Linux
+# vergleicht Tabellennamen aber case-sensitiv (lower_case_table_names=0) -- die Anwendung
+# findet ihre Tabellen dann nur, wenn die Schreibweise hier zu ihren Entity-Namen passt.
+maria.identifier.case=lower
 
 # ---- MariaDB ueber SSL/TLS (optional) ----------------------------------------
 # Ohne diese Schluessel verbindet sich MiGrape unverschluesselt wie bisher.
@@ -65,4 +76,6 @@ batch.size=2000
 fetch.size=2000
 
 # Optional: nur bestimmte Tabellen migrieren (Komma-getrennt). Leer = alle Tabellen.
+# Der Filter gilt auch fuer Sequenzen: bei gesetztem Filter werden nur aufgefuehrte Sequenzen
+# migriert (z.B. tables=KUNDE,KUNDE_SEQ).
 tables=

@@ -26,7 +26,18 @@ public final class TestConfigs {
     }
 
     public static MigrationConfig forMigration(String h2Url, String mariaUrl, int batchSize) throws IOException {
-        return write("""
+        return write(migrationProperties(h2Url, mariaUrl, batchSize));
+    }
+
+    /** Wie {@link #forMigration}, aber mit ausdruecklicher Schreibweise der Zielbezeichner. */
+    public static MigrationConfig forMigration(String h2Url, String mariaUrl, int batchSize,
+                                               String identifierCase) throws IOException {
+        return write(migrationProperties(h2Url, mariaUrl, batchSize)
+                + "maria.identifier.case=" + identifierCase + "\n");
+    }
+
+    private static String migrationProperties(String h2Url, String mariaUrl, int batchSize) {
+        return """
                 h2.url=%s
                 h2.user=sa
                 h2.password=
@@ -35,7 +46,7 @@ public final class TestConfigs {
                 maria.password=
                 batch.size=%d
                 fetch.size=%d
-                """.formatted(h2Url, mariaUrl, batchSize, batchSize));
+                """.formatted(h2Url, mariaUrl, batchSize, batchSize);
     }
 
     /** Config aus einem frei zusammengesetzten config.properties-Inhalt. */

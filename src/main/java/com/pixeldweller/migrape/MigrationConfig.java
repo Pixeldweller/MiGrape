@@ -1,5 +1,6 @@
 package com.pixeldweller.migrape;
 
+import com.pixeldweller.migrape.db.IdentifierCase;
 import com.pixeldweller.migrape.db.MariaDbSslConfig;
 
 import java.io.IOException;
@@ -21,6 +22,8 @@ public final class MigrationConfig {
     public final String mariaPassword;
     /** SSL/TLS- und weitere Treiber-Optionen fuer die MariaDB-Verbindung. */
     public final MariaDbSslConfig mariaSsl;
+    /** Schreibweise der Bezeichner in MariaDB, Standard: {@link IdentifierCase#LOWER}. */
+    public final IdentifierCase mariaIdentifierCase;
 
     public final int batchSize;
     public final int fetchSize;
@@ -38,6 +41,9 @@ public final class MigrationConfig {
         this.mariaUser = require(p, "maria.user");
         this.mariaPassword = p.getProperty("maria.password", "");
         this.mariaSsl = MariaDbSslConfig.from(p);
+        String identifierCase = optional(p, "maria.identifier.case");
+        this.mariaIdentifierCase = identifierCase == null
+                ? IdentifierCase.LOWER : IdentifierCase.parse(identifierCase);
 
         this.batchSize = positiveInt(p, "batch.size", 2000);
         this.fetchSize = positiveInt(p, "fetch.size", 2000);

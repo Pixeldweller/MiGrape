@@ -1,6 +1,7 @@
 package com.pixeldweller.migrape.schema;
 
 import com.pixeldweller.migrape.db.DbDialect;
+import com.pixeldweller.migrape.db.IdentifierCase;
 import com.pixeldweller.migrape.util.Log;
 
 import java.sql.Connection;
@@ -26,15 +27,63 @@ public final class SchemaWriter {
     /** Praefixlaenge fuer TEXT/BLOB-Spalten in Indizes (MariaDB verlangt eine Laenge). */
     private static final int KEY_PREFIX_LENGTH = 255;
 
+    /** Grenzen einer MariaDB-Sequenz; H2 erlaubt jeweils einen Wert mehr. */
+    private static final long MARIADB_SEQUENCE_MAX = Long.MAX_VALUE - 1;
+    private static final long MARIADB_SEQUENCE_MIN = Long.MIN_VALUE + 1;
+
     private final Connection maria;
     private final boolean dropExisting;
+    private final IdentifierCase identifierCase;
     /** Gemappte DDL-Typen je Tabelle/Spalte -- verhindert doppelte Warnungen aus dem TypeMapper. */
     private final Map<String, Map<String, String>> ddlTypes = new HashMap<>();
     private int failedObjects;
 
-    public SchemaWriter(Connection maria, boolean dropExisting) {
+    public SchemaWriter(Connection maria, boolean dropExisting, IdentifierCase identifierCase) {
         this.maria = maria;
         this.dropExisting = dropExisting;
+        this.identifierCase = identifierCase;
+    }
+
+    /** Legt die Sequenzen mit ihrem aktuellen H2-Stand an. Fehler brechen nicht ab, sondern
+     *  werden wie bei den uebrigen Nebenobjekten gezaehlt und gemeldet. */
+    public void createSequences(List<SequenceDefinition> sequences) throws SQLException {
+        int failedBefore = failedObjects;
+        for (SequenceDefinition seq : sequences) {
+            if (dropExisting) {
+                executeOptional("DROP SEQUENCE IF EXISTS " + quote(seq.name()),
+                        "(Entfernen) Sequenz " + seq.name());
+            }
+            Log.info("Erzeuge Sequenz " + seq.name() + " (naechster Wert " + seq.nextValue()
+                    + ", Schrittweite " + seq.increment() + ")");
+            executeOptional(createSequenceSql(seq), "Sequenz " + seq.name());
+        }
+        maria.commit();
+        if (failedObjects > failedBefore) {
+            Log.warn((failedObjects - failedBefore) + " Sequenz(en) konnten nicht angelegt werden -- "
+                    + "siehe Warnungen oben.");
+        }
+    }
+
+    private String createSequenceSql(SequenceDefinition seq) {
+        StringBuilder sql = new StringBuilder("CREATE SEQUENCE ").append(quote(seq.name()))
+                .append(" START WITH ").append(seq.nextValue())
+                .append(" INCREMENT BY ").append(seq.increment());
+        // Die H2-Standardgrenzen (Long.MIN/MAX) liegen je einen Wert ausserhalb dessen, was
+        // MariaDB akzeptiert -- dann gilt dort ohnehin der eigene Standard.
+        if (seq.minValue() >= MARIADB_SEQUENCE_MIN) {
+            sql.append(" MINVALUE ").append(seq.minValue());
+        }
+        if (seq.maxValue() <= MARIADB_SEQUENCE_MAX) {
+            sql.append(" MAXVALUE ").append(seq.maxValue());
+        }
+        sql.append(seq.cycle() ? " CYCLE" : " NOCYCLE");
+        return sql.toString();
+    }
+
+    /** Quotet einen Bezeichner in der konfigurierten Schreibweise. Intern (Maps, Typ-Cache,
+     *  Logausgaben) bleibt es beim H2-Namen; umgesetzt wird erst beim Erzeugen des SQL. */
+    private String quote(String identifier) {
+        return DbDialect.MARIADB.quote(identifierCase.apply(identifier));
     }
 
     public void createTables(List<String> orderedTableNames, Map<String, TableDefinition> tables)
@@ -79,7 +128,7 @@ public final class SchemaWriter {
         for (ColumnDefinition col : columns) {
             String type = types.get(col.name);
             StringBuilder member = new StringBuilder("  ")
-                    .append(DbDialect.MARIADB.quote(col.name)).append(" ").append(type);
+                    .append(quote(col.name)).append(" ").append(type);
             if (!col.nullable) {
                 member.append(" NOT NULL");
             }
@@ -100,11 +149,11 @@ public final class SchemaWriter {
             Log.warn("Tabelle " + table.name + ": AUTO_INCREMENT-Spalte '" + autoIncrementColumn
                     + "' ist nicht die erste Spalte des Primary Key -- es wird zusaetzlich ein "
                     + "UNIQUE-Index angelegt (MariaDB-Anforderung)");
-            members.add("  UNIQUE KEY " + DbDialect.MARIADB.quote("AI_" + autoIncrementColumn)
-                    + " (" + DbDialect.MARIADB.quote(autoIncrementColumn) + ")");
+            members.add("  UNIQUE KEY " + quote("AI_" + autoIncrementColumn)
+                    + " (" + quote(autoIncrementColumn) + ")");
         }
 
-        String sql = "CREATE TABLE " + DbDialect.MARIADB.quote(table.name) + " (\n"
+        String sql = "CREATE TABLE " + quote(table.name) + " (\n"
                 + String.join(",\n", members) + "\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
         Log.info("Erzeuge Tabelle " + table.name);
@@ -194,14 +243,14 @@ public final class SchemaWriter {
 
     private void createIndexes(TableDefinition table) {
         for (TableDefinition.UniqueConstraint uc : table.uniqueConstraints) {
-            String sql = "ALTER TABLE " + DbDialect.MARIADB.quote(table.name)
-                    + " ADD CONSTRAINT " + DbDialect.MARIADB.quote(uc.name())
+            String sql = "ALTER TABLE " + quote(table.name)
+                    + " ADD CONSTRAINT " + quote(uc.name())
                     + " UNIQUE (" + keyColumnList(table, uc.columns()) + ")";
             executeOptional(sql, "Unique-Constraint '" + uc.name() + "' auf " + table.name);
         }
         for (TableDefinition.Index index : table.indexes) {
-            String sql = "CREATE INDEX " + DbDialect.MARIADB.quote(index.name())
-                    + " ON " + DbDialect.MARIADB.quote(table.name)
+            String sql = "CREATE INDEX " + quote(index.name())
+                    + " ON " + quote(table.name)
                     + " (" + keyColumnList(table, index.columns()) + ")";
             executeOptional(sql, "Index '" + index.name() + "' auf " + table.name);
         }
@@ -216,10 +265,10 @@ public final class SchemaWriter {
                         + " ist nicht Teil der Migration");
                 continue;
             }
-            String sql = "ALTER TABLE " + DbDialect.MARIADB.quote(table.name)
-                    + " ADD CONSTRAINT " + DbDialect.MARIADB.quote(fk.fkName())
+            String sql = "ALTER TABLE " + quote(table.name)
+                    + " ADD CONSTRAINT " + quote(fk.fkName())
                     + " FOREIGN KEY (" + keyColumnList(table, fk.fkColumns()) + ")"
-                    + " REFERENCES " + DbDialect.MARIADB.quote(fk.referencedTable())
+                    + " REFERENCES " + quote(fk.referencedTable())
                     + " (" + keyColumnList(target, fk.referencedColumns()) + ")";
             executeOptional(sql, "Fremdschluessel '" + fk.fkName() + "' auf " + table.name);
         }
@@ -230,7 +279,7 @@ public final class SchemaWriter {
     private String keyColumnList(TableDefinition table, List<String> columns) {
         Map<String, String> types = typesFor(table);
         return columns.stream().map(column -> {
-            String quoted = DbDialect.MARIADB.quote(column);
+            String quoted = quote(column);
             String type = types.get(column);
             if (type != null && TypeMapper.requiresKeyPrefix(type)) {
                 Log.warn("Tabelle " + table.name + ": Schluesselspalte '" + column + "' ist als "
@@ -254,7 +303,7 @@ public final class SchemaWriter {
 
     private void dropTable(String tableName) throws SQLException {
         try (Statement stmt = maria.createStatement()) {
-            stmt.execute("DROP TABLE IF EXISTS " + DbDialect.MARIADB.quote(tableName));
+            stmt.execute("DROP TABLE IF EXISTS " + quote(tableName));
         }
     }
 

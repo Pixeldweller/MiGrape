@@ -1,6 +1,8 @@
 package com.pixeldweller.migrape.migration;
 
 import com.pixeldweller.migrape.db.DbDialect;
+import com.pixeldweller.migrape.db.IdentifierCase;
+import com.pixeldweller.migrape.db.Lobs;
 import com.pixeldweller.migrape.schema.ColumnDefinition;
 import com.pixeldweller.migrape.schema.TableDefinition;
 
@@ -27,12 +29,19 @@ public final class BatchInserter {
     private final Connection maria;
     private final int fetchSize;
     private final int batchSize;
+    private final IdentifierCase identifierCase;
 
-    public BatchInserter(Connection h2, Connection maria, int fetchSize, int batchSize) {
+    public BatchInserter(Connection h2, Connection maria, int fetchSize, int batchSize,
+                         IdentifierCase identifierCase) {
         this.h2 = h2;
         this.maria = maria;
         this.fetchSize = fetchSize;
         this.batchSize = batchSize;
+        this.identifierCase = identifierCase;
+    }
+
+    private String quoteTarget(String identifier) {
+        return DbDialect.MARIADB.quote(identifierCase.apply(identifier));
     }
 
     public long copy(TableDefinition table, ProgressPrinter progress) throws SQLException {
@@ -44,8 +53,8 @@ public final class BatchInserter {
                 + columns.stream().map(c -> DbDialect.H2.quote(c.name)).collect(Collectors.joining(", "))
                 + " FROM " + DbDialect.H2.quote(table.name);
 
-        String insertSql = "INSERT INTO " + DbDialect.MARIADB.quote(table.name) + " ("
-                + columns.stream().map(c -> DbDialect.MARIADB.quote(c.name)).collect(Collectors.joining(", "))
+        String insertSql = "INSERT INTO " + quoteTarget(table.name) + " ("
+                + columns.stream().map(c -> quoteTarget(c.name)).collect(Collectors.joining(", "))
                 + ") VALUES ("
                 + columns.stream().map(c -> "?").collect(Collectors.joining(", "))
                 + ")";
@@ -90,9 +99,7 @@ public final class BatchInserter {
      *
      *  Zwei Gruende fuer die Konvertierung:
      *  <ul>
-     *    <li>LOBs werden sofort materialisiert: die Handles von H2 sind an die Position des
-     *        ResultSet gebunden, gelesen wuerden sie aber erst bei executeBatch() -- also bis
-     *        zu batchSize Zeilen spaeter.</li>
+     *    <li>LOBs werden sofort materialisiert, siehe {@link Lobs}.</li>
      *    <li>java.sql.Date/Time/Timestamp sind Zeitpunkte in Epoch-Millisekunden und damit
      *        zeitzonenabhaengig. Werden sie ueber UTC interpretiert, verschieben sich Datumswerte
      *        aus der Zeit vor der Einfuehrung der Zonenzeit um bis zu einen Tag (Europe/Berlin
@@ -118,10 +125,10 @@ public final class BatchInserter {
             return uuid.toString();
         }
         if (value instanceof Clob clob) {
-            return readClob(clob);
+            return Lobs.readClob(clob);
         }
         if (value instanceof Blob blob) {
-            return readBlob(blob);
+            return Lobs.readBlob(blob);
         }
         if (value instanceof java.sql.Array array) {
             return arrayToJson(array);
@@ -142,42 +149,6 @@ public final class BatchInserter {
         java.time.LocalTime local = time.toLocalTime();
         long millis = Math.floorMod(time.getTime(), 1000L);
         return millis == 0 ? local : local.withNano((int) millis * 1_000_000);
-    }
-
-    private static String readClob(Clob clob) throws SQLException {
-        long length = clob.length();
-        if (length > Integer.MAX_VALUE) {
-            throw new SQLException("CLOB mit " + length + " Zeichen ist zu gross zum Kopieren");
-        }
-        try {
-            return length == 0 ? "" : clob.getSubString(1, (int) length);
-        } finally {
-            freeQuietly(clob);
-        }
-    }
-
-    private static byte[] readBlob(Blob blob) throws SQLException {
-        long length = blob.length();
-        if (length > Integer.MAX_VALUE) {
-            throw new SQLException("BLOB mit " + length + " Byte ist zu gross zum Kopieren");
-        }
-        try {
-            return length == 0 ? new byte[0] : blob.getBytes(1, (int) length);
-        } finally {
-            freeQuietly(blob);
-        }
-    }
-
-    private static void freeQuietly(Object lob) {
-        try {
-            if (lob instanceof Clob clob) {
-                clob.free();
-            } else if (lob instanceof Blob blob) {
-                blob.free();
-            }
-        } catch (SQLException | UnsupportedOperationException ignored) {
-            // free() ist optional; ein nicht freigegebenes LOB ist kein Fehlerfall.
-        }
     }
 
     /** H2-ARRAY wird als JSON-Array in eine LONGTEXT-Spalte geschrieben (siehe TypeMapper),

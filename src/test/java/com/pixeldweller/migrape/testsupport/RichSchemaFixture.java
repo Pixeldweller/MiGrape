@@ -108,6 +108,12 @@ public final class RichSchemaFixture {
     /** Laenger als 65535 Byte -- in einer TEXT-Spalte wuerde das abgewiesen/abgeschnitten. */
     public static final String CATEGORY_ROOT_NOTES = "Sehr lange Notiz mit Umlauten äöü. ".repeat(3000);
 
+    // ---- INVOICE_SEQ: Sequenz im Stil von Hibernate (allocationSize 50), bereits benutzt ----
+    public static final String SEQUENCE_NAME = "INVOICE_SEQ";
+    public static final long SEQUENCE_INCREMENT = 50;
+    /** Zwei Werte (1 und 51) sind vergeben -- der naechste ist 101. */
+    public static final long SEQUENCE_NEXT_VALUE = 101;
+
     public record Ids(long publisherId, long author1Id, long author2Id, long book1Id, long book2Id) {
     }
 
@@ -215,7 +221,9 @@ public final class RichSchemaFixture {
                     NOTES VARCHAR,
                     CONSTRAINT FK_CATEGORY_PARENT FOREIGN KEY (PARENT_ID) REFERENCES CATEGORY (ID)
                 )
-                """
+                """,
+
+                "CREATE SEQUENCE " + SEQUENCE_NAME + " START WITH 1 INCREMENT BY " + SEQUENCE_INCREMENT
         };
 
         try (Statement stmt = h2.createStatement()) {
@@ -235,6 +243,7 @@ public final class RichSchemaFixture {
         insertReviewVote(h2, book1Id);
         insertSettings(h2);
         insertCategories(h2);
+        advanceSequence(h2);
         return new Ids(publisherId, author1Id, author2Id, book1Id, book2Id);
     }
 
@@ -423,6 +432,17 @@ public final class RichSchemaFixture {
             ps.setString(3, CATEGORY_CHILD_NAME);
             ps.setNull(4, Types.VARCHAR);
             ps.executeUpdate();
+        }
+    }
+
+    /** Holt zwei Werte ab, so wie Hibernate es beim Einfuegen tut. */
+    private static void advanceSequence(Connection h2) throws SQLException {
+        try (Statement stmt = h2.createStatement()) {
+            for (int i = 0; i < 2; i++) {
+                try (ResultSet rs = stmt.executeQuery("SELECT NEXT VALUE FOR " + SEQUENCE_NAME)) {
+                    rs.next();
+                }
+            }
         }
     }
 

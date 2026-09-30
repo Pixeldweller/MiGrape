@@ -89,10 +89,15 @@ class HibernateFixtureMigrationTest {
         embeddedMariaDb.createDB(MARIA_DB_NAME);
         mariaUrl = builder.getURL(MARIA_DB_NAME);
 
-        MigrationConfig config = TestConfigs.forMigration(h2Url, mariaUrl, 100);
-        MigrationService service = new MigrationService(config);
+        MigrationService service = new MigrationService(config());
         service.migrateSchema(true);
         service.migrateData(new MigrationState(workDir.resolve("hibernate-fixture.state")), false);
+    }
+
+    /** Diese Testreihe vergleicht Namen 1:1 mit der Quelle, deshalb ohne Umschreibung. Die
+     *  Standardschreibweise (klein) deckt H2ToMariaDbMigrationTest ab. */
+    private MigrationConfig config() throws Exception {
+        return TestConfigs.forMigration(h2Url, mariaUrl, 100, "preserve");
     }
 
     @AfterAll
@@ -108,8 +113,7 @@ class HibernateFixtureMigrationTest {
     @Test
     @DisplayName("verify() meldet alle Tabellen der Fixture als uebereinstimmend")
     void verificationReportsAllTablesInSync() throws Exception {
-        MigrationConfig config = TestConfigs.forMigration(h2Url, mariaUrl, 100);
-        List<VerificationResult> results = new MigrationService(config).verify();
+        List<VerificationResult> results = new MigrationService(config()).verify();
 
         assertEquals(HibernateFixtureContract.TABLES.size(), results.size(),
                 "Anzahl verifizierter Tabellen");
@@ -245,9 +249,27 @@ class HibernateFixtureMigrationTest {
             assertEquals("auto_increment", extra(maria, "EMPLOYEE", "ID"));
             assertEquals("auto_increment", extra(maria, "DEPARTMENT", "ID"));
             assertEquals("", extra(maria, "GROUP", "ID"),
-                    "GROUP.ID kommt aus einer H2-Sequenz -- Sequenzen sind keine Tabellen und "
-                            + "werden nicht migriert, die Spalte darf kein AUTO_INCREMENT bekommen");
+                    "GROUP.ID kommt aus der Sequenz GROUP_SEQ und darf kein AUTO_INCREMENT bekommen");
             assertEquals("", extra(maria, "PROJECT", "CODE"));
+        }
+    }
+
+    @Test
+    @DisplayName("Sequenzen kommen mit ihrem aktuellen Stand an, nicht wieder ab 1")
+    void sequencesContinueWhereH2LeftOff() throws Exception {
+        long h2NextValue;
+        try (Connection h2 = DriverManager.getConnection(h2Url, "sa", "")) {
+            h2NextValue = Long.parseLong(scalar(h2, "SELECT BASE_VALUE FROM INFORMATION_SCHEMA.SEQUENCES "
+                    + "WHERE SEQUENCE_SCHEMA = 'PUBLIC' AND SEQUENCE_NAME = 'GROUP_SEQ'"));
+        }
+        assertTrue(h2NextValue > HibernateFixtureContract.ROW_COUNTS.get("GROUP"),
+                "Die Fixture hat GROUP-Zeilen ueber die Sequenz angelegt, war: " + h2NextValue);
+
+        try (Connection maria = openMaria()) {
+            // Eine MariaDB-Sequenz ist als Tabelle lesbar, ohne dabei einen Wert zu verbrauchen.
+            assertEquals(String.valueOf(h2NextValue),
+                    scalar(maria, "SELECT next_not_cached_value FROM `GROUP_SEQ`"));
+            assertEquals("1", scalar(maria, "SELECT increment FROM `GROUP_SEQ`"));
         }
     }
 

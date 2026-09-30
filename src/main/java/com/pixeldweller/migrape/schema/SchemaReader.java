@@ -59,7 +59,17 @@ public final class SchemaReader {
         return schema;
     }
 
+    /** Liest das Schema als Quelle einer Migration nach MariaDB -- inklusive der Warnungen zu
+     *  Objekten, die dabei verloren gehen. */
     public Map<String, TableDefinition> readSchema() throws SQLException {
+        Map<String, TableDefinition> tables = readTables();
+        warnAboutCheckConstraints(tables.keySet());
+        return tables;
+    }
+
+    /** Liest nur die Tabellen, ohne Warnungen zur Migration nach MariaDB. Fuer die Rueckrichtung,
+     *  in der H2 das Ziel ist und seine CHECK-Constraints behaelt. */
+    public Map<String, TableDefinition> readTables() throws SQLException {
         Map<String, TableDefinition> tables = new LinkedHashMap<>();
         DatabaseMetaData meta = h2.getMetaData();
 
@@ -82,8 +92,6 @@ public final class SchemaReader {
             readUniqueConstraints(table);
             readIndexes(meta, table);
         }
-
-        warnAboutCheckConstraints(tables.keySet());
         return tables;
     }
 
@@ -315,6 +323,34 @@ public final class SchemaReader {
                 table.indexes.add(new TableDefinition.Index(name, columns));
             }
         });
+    }
+
+    /** Liest die Sequenzen des Schemas. Hibernate vergibt damit IDs ({@code GenerationType.SEQUENCE}
+     *  bzw. AUTO, Namen wie {@code kunde_seq}); ohne sie legt die Anwendung in MariaDB neue
+     *  Sequenzen an, die bei 1 beginnen und mit den migrierten Primaerschluesseln kollidieren.
+     *  Die internen Sequenzen von Identity-Spalten fuehrt H2 hier nicht auf -- die werden zu
+     *  AUTO_INCREMENT. Der Tabellenfilter ({@code tables}) gilt auch fuer Sequenznamen. */
+    public List<SequenceDefinition> readSequences() {
+        List<SequenceDefinition> sequences = new ArrayList<>();
+        String sql = "SELECT SEQUENCE_NAME, BASE_VALUE, INCREMENT, MINIMUM_VALUE, MAXIMUM_VALUE, "
+                + "CYCLE_OPTION FROM INFORMATION_SCHEMA.SEQUENCES WHERE SEQUENCE_SCHEMA = ? "
+                + "ORDER BY SEQUENCE_NAME";
+        try (PreparedStatement ps = h2.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String name = rs.getString("SEQUENCE_NAME");
+                    if (config.isTableIncluded(name)) {
+                        sequences.add(new SequenceDefinition(name, rs.getLong("BASE_VALUE"),
+                                rs.getLong("INCREMENT"), rs.getLong("MINIMUM_VALUE"),
+                                rs.getLong("MAXIMUM_VALUE"), "YES".equalsIgnoreCase(rs.getString("CYCLE_OPTION"))));
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            Log.warn("Sequenzen nicht lesbar (" + e.getMessage() + "), sie werden nicht migriert");
+        }
+        return sequences;
     }
 
     /** CHECK-Constraints werden nicht uebersetzt (H2-Ausdruecke sind nicht allgemein nach

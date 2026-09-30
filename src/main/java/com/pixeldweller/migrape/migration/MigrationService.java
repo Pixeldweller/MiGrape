@@ -5,6 +5,7 @@ import com.pixeldweller.migrape.db.ConnectionFactory;
 import com.pixeldweller.migrape.db.DbDialect;
 import com.pixeldweller.migrape.schema.SchemaReader;
 import com.pixeldweller.migrape.schema.SchemaWriter;
+import com.pixeldweller.migrape.schema.SequenceDefinition;
 import com.pixeldweller.migrape.schema.TableDefinition;
 import com.pixeldweller.migrape.schema.TableOrderResolver;
 import com.pixeldweller.migrape.util.Log;
@@ -16,6 +17,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public final class MigrationService {
@@ -35,11 +37,15 @@ public final class MigrationService {
 
             SchemaReader reader = new SchemaReader(h2, config);
             Map<String, TableDefinition> tables = reader.readSchema();
+            List<SequenceDefinition> sequences = reader.readSequences();
             List<String> order = TableOrderResolver.resolve(tables);
 
-            Log.info("Erstelle Schema fuer " + tables.size() + " Tabelle(n) aus Schema "
-                    + reader.schema() + " in Reihenfolge: " + order);
-            new SchemaWriter(maria, dropExisting).createTables(order, tables);
+            Log.info("Erstelle Schema fuer " + tables.size() + " Tabelle(n) und " + sequences.size()
+                    + " Sequenz(en) aus Schema " + reader.schema() + " in Reihenfolge: " + order
+                    + " (Bezeichner: " + config.mariaIdentifierCase.name().toLowerCase(Locale.ROOT) + ")");
+            SchemaWriter writer = new SchemaWriter(maria, dropExisting, config.mariaIdentifierCase);
+            writer.createTables(order, tables);
+            writer.createSequences(sequences);
             Log.info("Schema-Migration abgeschlossen.");
         }
     }
@@ -55,7 +61,8 @@ public final class MigrationService {
             Map<String, TableDefinition> tables = new SchemaReader(h2, config).readSchema();
             List<String> order = TableOrderResolver.resolve(tables);
 
-            BatchInserter inserter = new BatchInserter(h2, maria, config.fetchSize, config.batchSize);
+            BatchInserter inserter = new BatchInserter(h2, maria, config.fetchSize, config.batchSize,
+                    config.mariaIdentifierCase);
             ProgressPrinter progress = new ProgressPrinter();
 
             // Fuer den gesamten Datenlauf abschalten: selbstreferenzierende und zyklische
@@ -83,7 +90,7 @@ public final class MigrationService {
 
     private void truncateTarget(Connection maria, String tableName) throws SQLException {
         try (Statement stmt = maria.createStatement()) {
-            stmt.execute("TRUNCATE TABLE " + DbDialect.MARIADB.quote(tableName));
+            stmt.execute("TRUNCATE TABLE " + targetName(tableName));
         }
         maria.commit();
     }
@@ -105,8 +112,8 @@ public final class MigrationService {
             Map<String, TableDefinition> tables = new SchemaReader(h2, config).readSchema();
             for (String tableName : tables.keySet()) {
                 try {
-                    long sourceCount = count(h2, DbDialect.H2, tableName);
-                    long targetCount = count(maria, DbDialect.MARIADB, tableName);
+                    long sourceCount = count(h2, DbDialect.H2.quote(tableName));
+                    long targetCount = count(maria, targetName(tableName));
                     results.add(new VerificationResult(tableName, sourceCount, targetCount));
                 } catch (SQLException e) {
                     results.add(VerificationResult.failed(tableName, e.getMessage()));
@@ -118,8 +125,13 @@ public final class MigrationService {
         return results;
     }
 
-    private long count(Connection conn, DbDialect dialect, String tableName) throws SQLException {
-        String sql = "SELECT COUNT(*) FROM " + dialect.quote(tableName);
+    /** Gequoteter Tabellenname in MariaDB, in der konfigurierten Schreibweise. */
+    private String targetName(String tableName) {
+        return DbDialect.MARIADB.quote(config.mariaIdentifierCase.apply(tableName));
+    }
+
+    private long count(Connection conn, String quotedTableName) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM " + quotedTableName;
         try (Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(sql)) {
             rs.next();
             return rs.getLong(1);

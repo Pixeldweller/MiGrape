@@ -5,6 +5,7 @@ import com.pixeldweller.migrape.MigrationConfig;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.Locale;
 import java.util.Properties;
 
 /** Erzeugt einfache JDBC-Connections. Bewusst ohne Connection-Pool (HikariCP etc.),
@@ -19,6 +20,20 @@ public final class ConnectionFactory {
 
     public Connection openH2() throws SQLException {
         return DriverManager.getConnection(config.h2Url, config.h2User, config.h2Password);
+    }
+
+    /** H2 als <em>Ziel</em>: die Datenbank muss bereits existieren. Ohne IFEXISTS wuerde H2 bei
+     *  einem Tippfehler im Pfad still eine neue, leere Datei anlegen. */
+    public Connection openExistingH2() throws SQLException {
+        return DriverManager.getConnection(existingOnly(config.h2Url), config.h2User, config.h2Password);
+    }
+
+    static String existingOnly(String h2Url) {
+        String upper = h2Url.toUpperCase(Locale.ROOT);
+        if (upper.contains(";IFEXISTS=") || upper.startsWith("JDBC:H2:MEM:")) {
+            return h2Url;
+        }
+        return h2Url + ";IFEXISTS=TRUE";
     }
 
     public Connection openMaria() throws SQLException {

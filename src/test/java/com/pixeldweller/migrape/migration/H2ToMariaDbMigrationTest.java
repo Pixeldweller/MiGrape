@@ -417,11 +417,19 @@ class H2ToMariaDbMigrationTest {
                         + "WHERE TABLE_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'UQ_AUTHOR_EXTERNAL'"),
                 "Unique-Constraint fehlt im Zielschema");
 
-        assertEquals("TITLE",
+        // Standard ist maria.identifier.case=lower: Spalten- und Constraint-Namen kommen klein an.
+        // (Die Tabellennamen legt die Windows-MariaDB der Tests ohnehin klein ab, daran liesse
+        // sich die Umschreibung nicht erkennen -- an den Spaltennamen schon.)
+        assertEquals("title",
                 scalar(maria, "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS "
                         + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'BOOK' "
                         + "AND INDEX_NAME = 'IDX_BOOK_TITLE'"),
                 "Sekundaerindex fehlt im Zielschema");
+        assertEquals("idx_book_title",
+                scalar(maria, "SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS "
+                        + "WHERE TABLE_SCHEMA = DATABASE() AND INDEX_NAME = 'IDX_BOOK_TITLE'"));
+        assertEquals(List.of(), columnsWithUpperCase(maria, "BOOK"),
+                "Mit maria.identifier.case=lower darf keine Spalte gross geschrieben ankommen");
 
         // Zusammengesetzter Fremdschluessel: eine Constraint mit zwei Spalten, nicht zwei Constraints.
         List<String> fkColumns = new ArrayList<>();
@@ -434,13 +442,41 @@ class H2ToMariaDbMigrationTest {
                 fkColumns.add(rs.getString(1));
             }
         }
-        assertEquals(List.of("BOOK_ID", "REVIEWER"), fkColumns,
+        assertEquals(List.of("book_id", "reviewer"), fkColumns,
                 "Zusammengesetzter Fremdschluessel muss beide Spalten in richtiger Reihenfolge haben");
 
         // Selbstreferenzierender Fremdschluessel muss trotz Datenkopie existieren.
         assertEquals("FOREIGN KEY",
                 scalar(maria, "SELECT CONSTRAINT_TYPE FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS "
                         + "WHERE TABLE_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'FK_CATEGORY_PARENT'"));
+
+        // Die Sequenz setzt beim H2-Stand fort, sonst kollidieren neue IDs mit den migrierten.
+        String sequence = "`" + RichSchemaFixture.SEQUENCE_NAME.toLowerCase(Locale.ROOT) + "`";
+        assertEquals(String.valueOf(RichSchemaFixture.SEQUENCE_NEXT_VALUE),
+                scalar(maria, "SELECT next_not_cached_value FROM " + sequence));
+        assertEquals(String.valueOf(RichSchemaFixture.SEQUENCE_INCREMENT),
+                scalar(maria, "SELECT increment FROM " + sequence));
+        assertEquals(String.valueOf(RichSchemaFixture.SEQUENCE_NEXT_VALUE),
+                scalar(maria, "SELECT NEXTVAL(" + sequence + ")"),
+                "Der erste in MariaDB vergebene Wert muss der naechste aus H2 sein");
+    }
+
+    /** Spaltennamen der Tabelle, die Grossbuchstaben enthalten. */
+    private static List<String> columnsWithUpperCase(Connection maria, String table) throws SQLException {
+        List<String> upper = new ArrayList<>();
+        try (PreparedStatement ps = maria.prepareStatement("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?")) {
+            ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String name = rs.getString(1);
+                    if (!name.equals(name.toLowerCase(Locale.ROOT))) {
+                        upper.add(name);
+                    }
+                }
+            }
+        }
+        return upper;
     }
 
     private long countRows(String table) throws SQLException {

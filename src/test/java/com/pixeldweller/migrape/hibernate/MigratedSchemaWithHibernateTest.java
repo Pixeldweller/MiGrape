@@ -328,6 +328,25 @@ class MigratedSchemaWithHibernateTest {
     }
 
     @Test
+    @DisplayName("Sequenz-IDs setzen nach der Migration fort, statt mit vorhandenen zu kollidieren")
+    void sequenceGeneratedIdsContinueAfterMigration() {
+        Long maxExistingId = sessionFactory.fromTransaction(session -> session
+                .createQuery("select max(g.id) from WorkGroup g", Long.class).getSingleResult());
+
+        Long newId = sessionFactory.fromTransaction(session -> {
+            WorkGroup group = new WorkGroup("nach.migration", "ja", null);
+            session.persist(group);
+            session.flush();
+            return group.id;
+        });
+
+        assertTrue(newId > maxExistingId, "GROUP_SEQ muss nach " + maxExistingId
+                + " weiterzaehlen, lieferte aber " + newId);
+
+        sessionFactory.inTransaction(session -> session.remove(session.find(WorkGroup.class, newId)));
+    }
+
+    @Test
     @DisplayName("Erzeugte Zeitstempel bleiben erhalten und werden weiter fortgeschrieben")
     void generatedTimestampsSurviveAndKeepWorking() {
         Long id = sessionFactory.fromTransaction(session -> {

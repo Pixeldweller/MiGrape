@@ -3,6 +3,7 @@ package com.pixeldweller.migrape;
 import com.pixeldweller.migrape.migration.MigrationService;
 import com.pixeldweller.migrape.migration.MigrationState;
 import com.pixeldweller.migrape.migration.VerificationResult;
+import com.pixeldweller.migrape.reverse.ReverseMigrationService;
 import com.pixeldweller.migrape.util.Log;
 
 import java.nio.file.Path;
@@ -33,13 +34,15 @@ public final class Main {
                     service.migrateData(state, false);
                 }
                 case "resume" -> service.migrateData(state, true);
-                case "verify" -> exitCode = printVerification(service.verify());
+                case "verify" -> exitCode = printVerification(service.verify(), "H2", "MariaDB");
                 case "migrate" -> {
                     state.clear();
                     service.migrateSchema(true);
                     service.migrateData(state, false);
-                    exitCode = printVerification(service.verify());
+                    exitCode = printVerification(service.verify(), "H2", "MariaDB");
                 }
+                case "reverse" -> exitCode = printVerification(
+                        new ReverseMigrationService(config).run(), "MariaDB", "H2");
                 default -> {
                     printUsage();
                     exitCode = 1;
@@ -62,7 +65,8 @@ public final class Main {
     }
 
     /** @return 0 wenn alle Tabellen uebereinstimmen, sonst 1 */
-    private static int printVerification(List<VerificationResult> results) {
+    private static int printVerification(List<VerificationResult> results, String sourceLabel,
+                                         String targetLabel) {
         Log.info("---- Verifikation ----");
         boolean allOk = true;
         for (VerificationResult r : results) {
@@ -72,8 +76,8 @@ public final class Main {
             if (r.problem() != null) {
                 Log.info(String.format("%-30s %-11s %s", r.table(), "FEHLER", r.problem()));
             } else {
-                Log.info(String.format("%-30s %-11s H2=%d  MariaDB=%d",
-                        r.table(), r.ok() ? "OK" : "ABWEICHUNG", r.sourceCount(), r.targetCount()));
+                Log.info(String.format("%-30s %-11s %s=%d  %s=%d", r.table(), r.ok() ? "OK" : "ABWEICHUNG",
+                        sourceLabel, r.sourceCount(), targetLabel, r.targetCount()));
             }
         }
         if (allOk) {
@@ -103,6 +107,10 @@ public final class Main {
                   data      Nur Daten kopieren, alle Tabellen neu (Schema muss existieren)
                   resume    Wie 'data', ueberspringt aber bereits als DONE markierte Tabellen
                   verify    Nur Zeilenzahlen zwischen H2 und MariaDB vergleichen
+                  reverse   Rueckrichtung: Daten von MariaDB in eine BESTEHENDE H2-Datenbank kopieren.
+                            Das H2-Schema muss schon existieren (z.B. von Hibernate mit
+                            ddl-auto=create angelegt); die betroffenen H2-Tabellen werden geleert,
+                            Identity-Spalten und Sequenzen auf den MariaDB-Stand gesetzt.
 
                 Exit-Code 1 bei Fehlern oder Abweichungen in der Verifikation.
                 Konfiguration ueber config.properties (siehe config.properties.example)
